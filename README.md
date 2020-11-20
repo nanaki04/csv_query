@@ -73,5 +73,5 @@ Save all changes made to all loaded csv files.
 ```
 > quit
 ```
-alias: q
+alias: q  
 Quit the cli.
