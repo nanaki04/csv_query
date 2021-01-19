@@ -4,6 +4,7 @@ defmodule CsvEditor.Csv do
   alias CsvEditor.Query.Select
   alias CsvEditor.Query.Update
   alias CsvEditor.Query.Copy
+  alias CsvEditor.Query.Search
 
   defstruct headers: [],
     records: [],
@@ -96,12 +97,20 @@ defmodule CsvEditor.Csv do
     end
   end
 
+  def query(csv, %Query{delete: true} = query) do
+    delete_query(csv, query)
+  end
+
   def query(csv, %Query{copy: %Copy{}} = query) do
     copy_query(csv, query)
   end
 
   def query(csv, %Query{update: %Update{}} = query) do
     update_query(csv, query)
+  end
+
+  def query(csv, %Query{search: %Search{}} = query) do
+    search_query(csv, query)
   end
 
   def query(csv, %Query{} = query) do
@@ -143,9 +152,7 @@ defmodule CsvEditor.Csv do
   end
 
   defp select_query(csv, %Select{} = query) do
-    records = Enum.filter(csv.records, fn record ->
-                Record.evaluate_where_clause(record, query.where)
-              end)
+    records = evaluate_where_clause(csv.records, query)
 
     result = case query.values do
                [] ->
@@ -163,16 +170,20 @@ defmodule CsvEditor.Csv do
   end
 
   defp update_query(csv, %Query{} = query) do
-    records = Enum.map(csv.records, fn record ->
-                case Record.evaluate_where_clause(record, query.select.where) do
-                  false ->
-                    record
-                  true ->
-                    Enum.reduce(query.update.values, record, fn
-                      {header, value}, acc -> Map.put(acc, header, value)
-                    end)
-                end
-              end)
+    {records, _} = Enum.reduce(csv.records, {[], 0}, fn record, {records, idx} ->
+                     case Record.evaluate_where_clause(record, query.select.where, idx) do
+                       false ->
+                         {[record | records], idx + 1}
+                       true ->
+                         record = Enum.reduce(query.update.values, record, fn
+                                    {header, value}, acc -> Map.put(acc, header, value)
+                                  end)
+
+                         {[record | records], idx + 1}
+                     end
+                   end)
+
+    records = Enum.reverse(records)
 
     Map.put(csv, :records, records)
     |> Map.put(:dirty, true)
@@ -180,9 +191,7 @@ defmodule CsvEditor.Csv do
   end
 
   defp copy_query(csv, query) do
-    records = Enum.filter(csv.records, fn record ->
-                Record.evaluate_where_clause(record, query.select.where)
-              end)
+    records = evaluate_where_clause(csv.records, query.select)
 
     case records do
       [] ->
@@ -220,6 +229,41 @@ defmodule CsvEditor.Csv do
         |> Map.put(:dirty, true)
         |> (& {:ok, &1}).()
     end
+  end
+
+  defp delete_query(csv, query) do
+    records = evaluate_where_clause(csv.records, query.select, true)
+
+    Map.put(csv, :records, records)
+    |> Map.put(:dirty, true)
+    |> (& {:ok, &1}).()
+  end
+
+  defp search_query(csv, query = %{search: %{key_term: key_term}}) do
+    Enum.filter(csv.records, fn record ->
+      Record.evaluate_key_value_terms(record, key_term, query.search.value_term)
+    end)
+    |> (& {:ok, &1}).()
+  end
+
+  defp search_query(csv, query) do
+    Enum.filter(csv.records, fn record ->
+      Record.evaluate_value_term(record, query.search.value_term)
+    end)
+    |> (& {:ok, &1}).()
+  end
+
+  defp evaluate_where_clause(records, query, inverse \\ false) do
+    {records, _} = Enum.reduce(records, {[], 0}, fn record, {records, idx} ->
+                     result = Record.evaluate_where_clause(record, query.where, idx)
+                     if (result && !inverse) || (inverse && !result) do
+                       {[record | records], idx + 1}
+                     else
+                       {records, idx + 1}
+                     end
+                   end)
+
+    Enum.reverse(records)
   end
 
 end

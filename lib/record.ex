@@ -15,13 +15,30 @@ defmodule CsvEditor.Record do
     |> Enum.join(",")
   end
 
-  def evaluate_where_clause(record, clause) do
+  def evaluate_where_clause(record, clause, idx) do
     Enum.reduce(clause, true, fn
       _, false ->
         false
+      {"index", index}, true ->
+        "#{idx}" == index
       {header, value}, true ->
         Map.fetch(record, header) == {:ok, value}
     end)
+  end
+
+  def evaluate_value_term(record, term) do
+    {:ok, pattern} = Regex.compile(term)
+    Map.values(record)
+    |> Enum.any?(fn value -> Regex.match?(pattern, value) end)
+  end
+
+  def evaluate_key_value_terms(record, key_term, value_term) do
+    {:ok, key_pattern} = Regex.compile(key_term)
+
+    Map.keys(record)
+    |> Enum.filter(fn key -> Regex.match?(key_pattern, key) end)
+    |> (fn keys -> Map.take(record, keys) end).()
+    |> evaluate_value_term(value_term)
   end
 
 end

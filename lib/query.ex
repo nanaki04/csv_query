@@ -2,18 +2,23 @@ defmodule CsvEditor.Query do
   alias CsvEditor.Query.Select
   alias CsvEditor.Query.Update
   alias CsvEditor.Query.Copy
+  alias CsvEditor.Query.Search
 
   @select_regex ~r/(select.+)($|from|set|where)/U
+  @search_regex ~r/(search.+)($|from|set|where)/U
   @from_regex ~r/(from.+)($|where)/U
   @where_regex ~r/(where.+)($|from|set)/U
   @update_regex ~r/(update.+)($|where|set)/U
   @set_regex ~r/(set.+)($|where)/U
   @copy_regex ~r/(copy.+)($|from|where)/U
   @to_regex ~r/(to.+)($|from|where)/U
+  @delete_regex ~r/(delete.+)($|from|where)/U
 
   defstruct select: %Select{},
+    search: nil,
     update: nil,
-    copy: nil
+    copy: nil,
+    delete: false
 
   def new() do
     %__MODULE__{}
@@ -89,11 +94,25 @@ defmodule CsvEditor.Query do
     Map.put(query, :copy, copy)
   end
 
+  def delete(%__MODULE__{} = query) do
+    Map.put(query, :delete, true)
+  end
+
+  def search(%__MODULE__{} = query, value_term) do
+    Map.put(query, :search, Search.terms(value_term))
+  end
+
+  def search(%__MODULE__{} = query, key_term, value_term) do
+    Map.put(query, :search, Search.terms(key_term, value_term))
+  end
+
   def parse(query_str) do
     new()
     |> parse_select(query_str)
+    |> parse_search(query_str)
     |> parse_update(query_str)
     |> parse_copy(query_str)
+    |> parse_delete(query_str)
     |> parse_from(query_str)
     |> parse_where(query_str)
     |> parse_set(query_str)
@@ -210,6 +229,36 @@ defmodule CsvEditor.Query do
                  |> tl()
 
         to(query, target)
+      _ ->
+        query
+    end
+  end
+
+  defp parse_delete(query, query_str) do
+    case Regex.run(@delete_regex, query_str) do
+      [_ | [_ | _]] ->
+        delete(query)
+      _ ->
+        query
+    end
+  end
+
+  defp parse_search(query, query_str) do
+    case Regex.run(@search_regex, query_str) do
+      [_ | [search_query | _]] ->
+        vals = String.split(search_query, " ")
+               |> tl()
+               |> Enum.map(&String.trim/1)
+               |> Enum.filter(fn val -> val != "" end)
+
+        case vals do
+          [table, value_term] ->
+            search(query, value_term)
+            |> from(table)
+          [table, key_term, value_term] ->
+            search(query, key_term, value_term)
+            |> from(table)
+        end
       _ ->
         query
     end
